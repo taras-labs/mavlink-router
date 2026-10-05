@@ -54,6 +54,7 @@ struct UartEndpointConfig {
     std::vector<uint8_t> allow_src_sys_in;
     std::vector<uint8_t> block_src_sys_in;
     std::string group;
+    bool master{false}; ///< MAVProxy-style vehicle side, see Mainloop::route_msg
 };
 
 struct UdpEndpointConfig {
@@ -76,6 +77,7 @@ struct UdpEndpointConfig {
     std::vector<uint8_t> allow_src_sys_in;
     std::vector<uint8_t> block_src_sys_in;
     std::string group;
+    bool master{false}; ///< MAVProxy-style vehicle side, see Mainloop::route_msg
 };
 
 struct TcpEndpointConfig {
@@ -96,6 +98,7 @@ struct TcpEndpointConfig {
     std::vector<uint8_t> allow_src_sys_in;
     std::vector<uint8_t> block_src_sys_in;
     std::string group;
+    bool master{false}; ///< MAVProxy-style vehicle side, see Mainloop::route_msg
 };
 
 /*
@@ -177,7 +180,9 @@ public:
         return has_sys_comp_id(sys_comp_id);
     }
 
-    AcceptState accept_msg(const struct buffer *pbuf) const;
+    // @routed false skips the target sysid/compid routing: loop check and
+    // filters only
+    AcceptState accept_msg(const struct buffer *pbuf, bool routed = true) const;
 
     void filter_add_allowed_out_msg_id(uint32_t msg_id)
     {
@@ -236,6 +241,11 @@ public:
     std::string get_type() const { return this->_type; }
     std::string get_group_name() const { return this->_group_name; };
 
+    bool is_master() const { return _master; }
+    void set_master(bool master) { _master = master; }
+    // sys/comp ids of the autopilots that sent a HEARTBEAT here (masters only)
+    const std::vector<uint16_t> &get_autopilots() const { return _autopilots; }
+
     struct buffer rx_buf;
     struct buffer tx_buf;
 
@@ -275,6 +285,10 @@ protected:
 
     uint32_t _incomplete_msgs = 0;
     std::vector<uint16_t> _sys_comp_ids;
+
+    bool _master = false;
+    std::vector<uint16_t> _autopilots;
+    void _add_autopilot(const struct buffer *pbuf);
 
 private:
     std::vector<uint32_t> _allowed_outgoing_msg_ids;

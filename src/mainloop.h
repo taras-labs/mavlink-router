@@ -25,6 +25,7 @@
 
 #include "binlog.h"
 #include "comm.h"
+#include "comp_priority.h"
 #include "dedup.h"
 #include "endpoint.h"
 #include "timeout.h"
@@ -44,6 +45,14 @@ struct Configuration {
     std::vector<UdpEndpointConfig> udp_configs;
     std::vector<TcpEndpointConfig> tcp_configs;
     unsigned long sniffer_sysid;
+
+    std::vector<uint8_t> comp_priority;           ///< conf "CompPriority", highest first
+    std::vector<uint32_t> comp_priority_msg_ids;  ///< conf "CompPriorityMsgIds"
+    unsigned long comp_priority_timeout_ms{500};  ///< conf "CompPriorityTimeout"
+    unsigned long gcs_heartbeat_rate{0};          ///< conf "GcsHeartbeatRate", Hz
+    unsigned long stream_rate{0};                 ///< conf "StreamRate", Hz
+    unsigned long gcs_sysid{255};                 ///< conf "GcsSysid"
+    unsigned long gcs_compid{230};                ///< conf "GcsCompid"
 };
 
 struct endpoint_entry {
@@ -58,7 +67,7 @@ public:
     int mod_fd(int fd, void *data, int events) const;
     int remove_fd(int fd) const;
     int loop();
-    void route_msg(struct buffer *buf);
+    void route_msg(struct buffer *buf, const Endpoint *source = nullptr);
     void handle_tcp_connection();
     int write_msg(const std::shared_ptr<Endpoint> &e, const struct buffer *buf) const;
     void process_tcp_hangups();
@@ -75,6 +84,12 @@ public:
     bool dedup_check_msg(const buffer *buf);
 
     void print_statistics();
+
+    /*
+     * Ask a newly seen autopilot on a master endpoint for its streams now,
+     * rather than on the next StreamRate period.
+     */
+    void request_streams(const Endpoint *master, uint16_t sys_comp_id);
 
     int epollfd = -1;
     bool should_process_tcp_hangups = false;
@@ -117,6 +132,14 @@ private:
     Timeout *_timeouts = nullptr;
 
     Dedup _msg_dedup{0}; // disabled by default
+    CompPriority _comp_priority{}; // disabled by default
+
+    bool _hub_mode = false; // any endpoint is a Master
+    struct {
+        uint8_t sysid = 255;
+        uint8_t compid = 230;
+        unsigned long stream_rate = 0;
+    } _gcs;
 
     struct {
         uint32_t msg_to_unknown = 0;
@@ -128,6 +151,12 @@ private:
     void _del_timeouts();
     bool _retry_timeout_cb(void *data);
     bool _log_aggregate_timeout(void *data);
+    Endpoint::AcceptState _hub_accept(const Endpoint &e, const struct buffer *buf,
+                                      const Endpoint *source) const;
+    void _write_to(const std::shared_ptr<Endpoint> &e, const mavlink_message_t *msg);
+    void _request_streams(const std::shared_ptr<Endpoint> &e, uint16_t sys_comp_id);
+    bool _gcs_heartbeat_timeout_cb(void *data);
+    bool _stream_rate_timeout_cb(void *data);
 
     Mainloop() = default;
     Mainloop(const Mainloop &) = delete;

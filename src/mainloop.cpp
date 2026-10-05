@@ -155,12 +155,47 @@ int Mainloop::write_msg(const std::shared_ptr<Endpoint> &e, const struct buffer 
     return r;
 }
 
-void Mainloop::route_msg(struct buffer *buf)
+/*
+ * MAVProxy semantics, once any endpoint is a Master: what a master hears goes
+ * to every non-master whatever it is addressed to (which is how one GCS reads
+ * the autopilot's replies to another), what a non-master hears goes to the
+ * masters only, routed by target as usual, and nothing passes between two
+ * masters or two non-masters. Log endpoints and messages the router makes
+ * itself (no source) keep the normal routing.
+ */
+Endpoint::AcceptState Mainloop::_hub_accept(const Endpoint &e, const struct buffer *buf,
+                                            const Endpoint *source) const
+{
+    if (source == nullptr || e.get_type() == ENDPOINT_TYPE_LOG) {
+        return e.accept_msg(buf);
+    }
+
+    if (&e == source || e.is_master() == source->is_master()) {
+        return Endpoint::AcceptState::Rejected;
+    }
+
+    return e.accept_msg(buf, !source->is_master());
+}
+
+void Mainloop::route_msg(struct buffer *buf, const Endpoint *source)
 {
     bool unknown = true;
 
+    if (!_comp_priority.check(buf->curr.msg_id,
+                              buf->curr.target_sysid,
+                              buf->curr.src_compid,
+                              now_usec())) {
+        log_trace("Message %u to %d/%d from %u/%u dropped by component priority",
+                  buf->curr.msg_id,
+                  buf->curr.target_sysid,
+                  buf->curr.target_compid,
+                  buf->curr.src_sysid,
+                  buf->curr.src_compid);
+        return;
+    }
+
     for (const auto &e : this->g_endpoints) {
-        auto acceptState = e->accept_msg(buf);
+        auto acceptState = _hub_mode ? _hub_accept(*e, buf, source) : e->accept_msg(buf);
 
         switch (acceptState) {
         case Endpoint::AcceptState::Accepted:
@@ -359,6 +394,86 @@ bool Mainloop::dedup_check_msg(const buffer *buf)
         == Dedup::PacketStatus::NEW_PACKET_OR_TIMED_OUT;
 }
 
+void Mainloop::_write_to(const std::shared_ptr<Endpoint> &e, const mavlink_message_t *msg)
+{
+    uint8_t data[MAVLINK_MAX_PACKET_LEN];
+    struct buffer buf = {};
+
+    buf.len = mavlink_msg_to_send_buffer(data, msg);
+    buf.data = data;
+
+    if (write_msg(e, &buf) == -EPIPE) {
+        should_process_tcp_hangups = true;
+    }
+}
+
+bool Mainloop::_gcs_heartbeat_timeout_cb(void *data)
+{
+    mavlink_message_t msg;
+
+    mavlink_msg_heartbeat_pack(_gcs.sysid,
+                               _gcs.compid,
+                               &msg,
+                               MAV_TYPE_GCS,
+                               MAV_AUTOPILOT_INVALID,
+                               0,
+                               0,
+                               0);
+
+    for (const auto &e : g_endpoints) {
+        if (e->is_master()) {
+            _write_to(e, &msg);
+        }
+    }
+
+    return true;
+}
+
+void Mainloop::_request_streams(const std::shared_ptr<Endpoint> &e, uint16_t sys_comp_id)
+{
+    mavlink_message_t msg;
+
+    mavlink_msg_request_data_stream_pack(_gcs.sysid,
+                                         _gcs.compid,
+                                         &msg,
+                                         sys_comp_id >> 8,
+                                         sys_comp_id & 0xff,
+                                         MAV_DATA_STREAM_ALL,
+                                         _gcs.stream_rate,
+                                         1);
+    _write_to(e, &msg);
+}
+
+void Mainloop::request_streams(const Endpoint *master, uint16_t sys_comp_id)
+{
+    if (_gcs.stream_rate == 0) {
+        return;
+    }
+
+    for (const auto &e : g_endpoints) {
+        if (e.get() == master) {
+            _request_streams(e, sys_comp_id);
+            return;
+        }
+    }
+}
+
+// MAVProxy re-sends this every 15 s, so a vehicle that rebooted, or a rate
+// another GCS changed, comes back on its own.
+bool Mainloop::_stream_rate_timeout_cb(void *data)
+{
+    for (const auto &e : g_endpoints) {
+        if (!e->is_master()) {
+            continue;
+        }
+        for (auto sys_comp_id : e->get_autopilots()) {
+            _request_streams(e, sys_comp_id);
+        }
+    }
+
+    return true;
+}
+
 bool Mainloop::add_endpoints(const Configuration &config)
 {
     // Create UART and UDP endpoints
@@ -456,6 +571,62 @@ bool Mainloop::add_endpoints(const Configuration &config)
     if (config.dedup_period_ms > 0) {
         log_info("Message de-duplication enabled: %ld ms period", config.dedup_period_ms);
         _msg_dedup.set_dedup_period(config.dedup_period_ms);
+    }
+
+    if (!config.comp_priority.empty()) {
+        std::vector<uint32_t> msg_ids = config.comp_priority_msg_ids;
+        if (msg_ids.empty()) {
+            msg_ids = {MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE, MAVLINK_MSG_ID_MANUAL_CONTROL};
+        }
+
+        std::string order, ids;
+        for (auto compid : config.comp_priority) {
+            order += (order.empty() ? "" : " > ") + std::to_string(compid);
+        }
+        for (auto msg_id : msg_ids) {
+            ids += (ids.empty() ? "" : ",") + std::to_string(msg_id);
+        }
+        log_info("Component priority enabled: %s for messages %s, %lu ms timeout",
+                 order.c_str(),
+                 ids.c_str(),
+                 config.comp_priority_timeout_ms);
+        _comp_priority.configure(config.comp_priority, msg_ids, config.comp_priority_timeout_ms);
+    }
+
+    unsigned masters = 0;
+    for (const auto &e : g_endpoints) {
+        masters += e->is_master() ? 1 : 0;
+    }
+    _hub_mode = masters > 0;
+    if (_hub_mode) {
+        log_info("MAVProxy-style routing: %u master endpoint(s)", masters);
+    }
+
+    _gcs.sysid = config.gcs_sysid;
+    _gcs.compid = config.gcs_compid;
+    _gcs.stream_rate = config.stream_rate;
+
+    if ((config.gcs_heartbeat_rate > 0 || config.stream_rate > 0) && !_hub_mode) {
+        log_error("GcsHeartbeatRate and StreamRate are sent to Master endpoints, and none is "
+                  "configured");
+        return false;
+    }
+
+    if (config.gcs_heartbeat_rate > 0) {
+        log_info("Sending GCS heartbeat as %u/%u at %lu Hz to masters",
+                 _gcs.sysid,
+                 _gcs.compid,
+                 config.gcs_heartbeat_rate);
+        add_timeout(MSEC_PER_SEC / config.gcs_heartbeat_rate,
+                    std::bind(&Mainloop::_gcs_heartbeat_timeout_cb, this, std::placeholders::_1),
+                    this);
+    }
+
+    if (config.stream_rate > 0) {
+        log_info("Requesting all streams at %lu Hz from autopilots on masters", config.stream_rate);
+        add_timeout(15 * MSEC_PER_SEC,
+                    std::bind(&Mainloop::_stream_rate_timeout_cb, this, std::placeholders::_1),
+                    this);
     }
 
     return true;

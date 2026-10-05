@@ -4,6 +4,7 @@ exe_mavlink_router = executable('mavlink-routerd',
         [
          'autolog.cpp',
          'binlog.cpp',
+         'comp_priority.cpp',
          'dedup.cpp',
          'endpoint.cpp',
          'git_version.cpp',
@@ -31,6 +32,7 @@ if dep_gtest.found()
           [
             'autolog.cpp',
             'binlog.cpp',
+            'comp_priority.cpp',
             'dedup.cpp',
             'endpoint.cpp',
             'logendpoint.cpp',
@@ -56,6 +58,7 @@ if dep_gtest.found()
           [
             'autolog.cpp',
             'binlog.cpp',
+            'comp_priority.cpp',
             'dedup.cpp',
             'endpoint.cpp',
             'endpoints_test.cpp',
@@ -76,4 +79,19 @@ if dep_gtest.found()
           install: false,
   )
   test('endpoints', exe_endpoints_test)
+
+  exe_comp_priority_test = executable('comp_priority_test',
+          [
+            'comp_priority.cpp',
+            'comp_priority_test.cpp',
+          ],
+          include_directories: [src_inc, mavlink_inc],
+          dependencies : [
+            dep_gtest,
+            dep_rt,
+          ],
+          link_with: libcommon_private,
+          install: false,
+  )
+  test('comp_priority', exe_comp_priority_test)
 endif

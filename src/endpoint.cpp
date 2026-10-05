@@ -73,6 +73,7 @@ const ConfFile::OptionsTable UartEndpoint::option_table[] = {
     {"AllowSrcSysIn",   false, ConfFile::parse_uint8_vector,    OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, allow_src_sys_in)},
     {"BlockSrcSysIn",   false, ConfFile::parse_uint8_vector,    OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, block_src_sys_in)},
     {"group",           false, ConfFile::parse_stdstring,       OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, group)},
+    {"Master",          false, ConfFile::parse_bool,            OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, master)},
     {}
 };
 
@@ -95,6 +96,7 @@ const ConfFile::OptionsTable UdpEndpoint::option_table[] = {
     {"AllowSrcSysIn",   false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, allow_src_sys_in)},
     {"BlockSrcSysIn",   false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, block_src_sys_in)},
     {"group",           false,  ConfFile::parse_stdstring,      OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, group)},
+    {"Master",          false,  ConfFile::parse_bool,           OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, master)},
     {}
 };
 
@@ -116,6 +118,7 @@ const ConfFile::OptionsTable TcpEndpoint::option_table[] = {
     {"AllowSrcSysIn",   false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, allow_src_sys_in)},
     {"BlockSrcSysIn",   false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, block_src_sys_in)},
     {"group",           false,  ConfFile::parse_stdstring,      OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, group)},
+    {"Master",          false,  ConfFile::parse_bool,           OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, master)},
     {}
 };
 // clang-format on
@@ -244,7 +247,10 @@ int Endpoint::handle_read()
             }
         } else {
             _add_sys_comp_id(buf.curr.src_sysid, buf.curr.src_compid);
-            Mainloop::get_instance().route_msg(&buf);
+            if (_master && buf.curr.msg_id == MAVLINK_MSG_ID_HEARTBEAT) {
+                _add_autopilot(&buf);
+            }
+            Mainloop::get_instance().route_msg(&buf, this);
         }
     }
 
@@ -458,6 +464,29 @@ int Endpoint::read_msg(struct buffer *pbuf)
     return msg_entry != nullptr ? ReadOk : ReadUnkownMsg;
 }
 
+void Endpoint::_add_autopilot(const struct buffer *pbuf)
+{
+    // HEARTBEAT payload: custom_mode (uint32), type, autopilot, ... MAVLink 2
+    // trims trailing zeros, so a short payload means autopilot 0 (generic).
+    const unsigned autopilot_ofs = 5;
+    uint8_t autopilot = pbuf->curr.payload_len > autopilot_ofs
+        ? pbuf->curr.payload[autopilot_ofs]
+        : 0;
+    if (autopilot == MAV_AUTOPILOT_INVALID) {
+        return; // GCS, radio, camera, ...: nothing to request streams from
+    }
+
+    uint16_t sys_comp_id = ((uint16_t)pbuf->curr.src_sysid << 8) | pbuf->curr.src_compid;
+    if (vector_contains(_autopilots, sys_comp_id)) {
+        return;
+    }
+
+    log_info("Master [%d]%s: autopilot %u/%u", fd, _name.c_str(), pbuf->curr.src_sysid,
+             pbuf->curr.src_compid);
+    _autopilots.push_back(sys_comp_id);
+    Mainloop::get_instance().request_streams(this, sys_comp_id);
+}
+
 void Endpoint::_add_sys_comp_id(uint8_t sysid, uint8_t compid)
 {
     uint16_t sys_comp_id = ((uint16_t)sysid << 8) | compid;
@@ -500,7 +529,7 @@ bool Endpoint::has_sys_comp_id(unsigned sys_comp_id) const
     return false;
 }
 
-Endpoint::AcceptState Endpoint::accept_msg(const struct buffer *pbuf) const
+Endpoint::AcceptState Endpoint::accept_msg(const struct buffer *pbuf, bool routed) const
 {
     if (Log::get_max_level() >= Log::Level::TRACE) {
         log_trace("Endpoint [%d]%s: got message %u to %d/%d from %u/%u",
@@ -557,6 +586,11 @@ Endpoint::AcceptState Endpoint::accept_msg(const struct buffer *pbuf) const
     if (pbuf->curr.msg_id != UINT32_MAX && !_blocked_outgoing_src_systems.empty()
         && vector_contains(_blocked_outgoing_src_systems, pbuf->curr.src_sysid)) {
         return Endpoint::AcceptState::Filtered;
+    }
+
+    // Caller does its own routing (MAVProxy-style masters): filters only
+    if (!routed) {
+        return Endpoint::AcceptState::Accepted;
     }
 
     // Message is broadcast on sysid or sysid is non-existent: accept msg
@@ -792,6 +826,7 @@ bool UartEndpoint::setup(UartEndpointConfig conf)
     }
 
     this->_group_name = conf.group;
+    this->set_master(conf.master);
 
     return true;
 }
@@ -1126,6 +1161,7 @@ bool UdpEndpoint::setup(UdpEndpointConfig conf)
     }
 
     this->_group_name = conf.group;
+    this->set_master(conf.master);
 
     return true;
 }
@@ -1498,6 +1534,7 @@ bool TcpEndpoint::setup(TcpEndpointConfig conf)
     }
 
     this->_group_name = conf.group;
+    this->set_master(conf.master);
 
     if (!this->open(conf.address, conf.port)) {
         log_warning("Could not open %s:%ld, re-trying every %d sec",

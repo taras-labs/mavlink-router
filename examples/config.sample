@@ -94,6 +94,45 @@
 # Default: <false>
 # LogTelemetry = false
 
+# CompPriority
+# Let one component at a time drive a vehicle with the messages in
+# CompPriorityMsgIds, e.g. two RC transmitters both sending
+# RC_CHANNELS_OVERRIDE, which the autopilot would otherwise interleave. The
+# first listed component that sent one within CompPriorityTimeout wins; a
+# higher one takes over on its first message, a lower one only after the
+# higher has been silent for the whole timeout. Components not listed pass
+# untouched. Arbitrated separately per target system.
+# Default: empty (disabled)
+#CompPriority = 190,191
+
+# CompPriorityMsgIds
+# Default: 70,69 (RC_CHANNELS_OVERRIDE, MANUAL_CONTROL)
+#CompPriorityMsgIds = 70,69
+
+# CompPriorityTimeout
+# Milliseconds of silence after which a component loses its turn.
+# Default: 500
+#CompPriorityTimeout = 500
+
+# GcsHeartbeatRate
+# Send a GCS HEARTBEAT (as GcsSysid/GcsCompid) to every Master endpoint at this
+# rate, like MAVProxy does. Needs a Master endpoint.
+# Default: 0 (disabled)
+#GcsHeartbeatRate = 1
+
+# StreamRate
+# Ask every autopilot seen on a Master endpoint for MAV_DATA_STREAM_ALL at this
+# rate, on first sight and every 15 s after, like MAVProxy's streamrate. Needs a
+# Master endpoint.
+# Default: 0 (disabled)
+#StreamRate = 4
+
+# GcsSysid / GcsCompid
+# Source of the two messages above.
+# Default: 255 / 230 (MAVProxy's)
+#GcsSysid = 255
+#GcsCompid = 230
+
 
 ##
 ## UART Endpoint Configurations
@@ -194,6 +233,15 @@
 # Set the same name (arbitrary string) on multiple endpoints to group them.
 # Default: Empty (no group)
 #Group = 
+
+# Master (UART, UDP and TCP endpoints)
+# MAVProxy-style routing. Once any endpoint is a Master, everything a master
+# receives goes to every non-master endpoint whatever it is addressed to,
+# everything else goes to the masters only (routed by target as usual), and
+# nothing passes between two masters or between two non-masters. TCP server
+# clients are non-masters.
+# Default: false
+#Master = false
 
 ## Example
 [UartEndpoint alpha]

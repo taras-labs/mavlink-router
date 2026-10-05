@@ -441,6 +441,13 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
         {"DebugLogLevel",       false, parse_log_level,         OPTIONS_TABLE_STRUCT_FIELD(Configuration, debug_log_level)},
         {"DeduplicationPeriod", false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, dedup_period_ms)},
         {"SnifferSysid",    false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, sniffer_sysid)},
+        {"CompPriority",        false, ConfFile::parse_uint8_vector,  OPTIONS_TABLE_STRUCT_FIELD(Configuration, comp_priority)},
+        {"CompPriorityMsgIds",  false, ConfFile::parse_uint32_vector, OPTIONS_TABLE_STRUCT_FIELD(Configuration, comp_priority_msg_ids)},
+        {"CompPriorityTimeout", false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, comp_priority_timeout_ms)},
+        {"GcsHeartbeatRate",    false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_heartbeat_rate)},
+        {"StreamRate",          false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, stream_rate)},
+        {"GcsSysid",            false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_sysid)},
+        {"GcsCompid",           false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_compid)},
         {}
     };
     // clang-format on
@@ -448,6 +455,19 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
     ret = conffile.extract_options("General", global_option_table, &config);
     if (ret < 0) {
         return ret;
+    }
+
+    if (config.gcs_sysid > 255 || config.gcs_compid > 255) {
+        log_error("GcsSysid and GcsCompid must be 0..255");
+        return -EINVAL;
+    }
+    if (config.gcs_heartbeat_rate > 100) {
+        log_error("GcsHeartbeatRate must be 0..100 Hz");
+        return -EINVAL;
+    }
+    if (config.stream_rate > UINT16_MAX) {
+        log_error("StreamRate must be 0..%u Hz", UINT16_MAX);
+        return -EINVAL;
     }
 
     ret = conffile.extract_options("General", LogEndpoint::option_table, &config.log_config);

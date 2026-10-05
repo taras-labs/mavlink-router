@@ -133,6 +133,18 @@
 #GcsSysid = 255
 #GcsCompid = 230
 
+# MasterFailoverTimeout
+# With two or more Master endpoints carrying the same vehicle (two links to
+# one autopilot), pass each vehicle's (source sysid's) messages from one
+# master only: the best MasterPriority one that delivered within this many
+# milliseconds. A better one takes over on its first message. Messages from
+# the GCS side to a vehicle go out on that vehicle's current master only, ones
+# with no target on the current master of every autopilot; with nothing heard
+# within the timeout they go to every master. GcsHeartbeatRate and StreamRate
+# keep going to every master, so a standby link keeps streaming.
+# Default: 0 (disabled: every master passes)
+#MasterFailoverTimeout = 500
+
 
 ##
 ## UART Endpoint Configurations
@@ -242,6 +254,12 @@
 # clients are non-masters.
 # Default: false
 #Master = false
+
+# MasterPriority (UART, UDP and TCP endpoints)
+# Order of the Master endpoints for MasterFailoverTimeout, lower first. Ties
+# keep the order endpoints are created in: UART, then UDP, then TCP sections.
+# Default: 0
+#MasterPriority = 0
 
 ## Example
 [UartEndpoint alpha]

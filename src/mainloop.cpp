@@ -23,6 +23,7 @@
 #include <sys/timerfd.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 
@@ -161,10 +162,12 @@ int Mainloop::write_msg(const std::shared_ptr<Endpoint> &e, const struct buffer 
  * the autopilot's replies to another), what a non-master hears goes to the
  * masters only, routed by target as usual, and nothing passes between two
  * masters or two non-masters. Log endpoints and messages the router makes
- * itself (no source) keep the normal routing.
+ * itself (no source) keep the normal routing. @uplink_masters is a mask of
+ * master ranks a non-master's message may go to (master failover).
  */
 Endpoint::AcceptState Mainloop::_hub_accept(const Endpoint &e, const struct buffer *buf,
-                                            const Endpoint *source) const
+                                            const Endpoint *source,
+                                            uint64_t uplink_masters) const
 {
     if (source == nullptr || e.get_type() == ENDPOINT_TYPE_LOG) {
         return e.accept_msg(buf);
@@ -174,12 +177,78 @@ Endpoint::AcceptState Mainloop::_hub_accept(const Endpoint &e, const struct buff
         return Endpoint::AcceptState::Rejected;
     }
 
+    if (e.is_master() && ((uplink_masters >> e.get_master_rank()) & 1) == 0) {
+        return Endpoint::AcceptState::Rejected;
+    }
+
     return e.accept_msg(buf, !source->is_master());
+}
+
+/*
+ * Master failover, vehicle side: of the masters a vehicle (source sysid) is
+ * heard on, only the best one that delivered within MasterFailoverTimeout is
+ * passed on. The others are still recorded, so the next one is ready.
+ */
+bool Mainloop::_failover_passes(const struct buffer *buf, const Endpoint &source)
+{
+    const int rank = source.get_master_rank();
+    auto v = _master_failover.observe(buf->curr.src_sysid, rank, now_usec());
+
+    if (v.changed) {
+        const std::string to = _masters[v.winner]->get_name();
+        if (v.previous < 0) {
+            log_info("Master failover: sysid %u via %s", buf->curr.src_sysid, to.c_str());
+        } else if (v.winner < v.previous) {
+            log_info("Master failover: sysid %u back on %s from %s",
+                     buf->curr.src_sysid,
+                     to.c_str(),
+                     _masters[v.previous]->get_name().c_str());
+        } else {
+            log_warning("Master failover: sysid %u switched to %s, %s silent for %u ms",
+                        buf->curr.src_sysid,
+                        to.c_str(),
+                        _masters[v.previous]->get_name().c_str(),
+                        _master_failover.timeout_ms());
+        }
+    }
+
+    return v.winner == rank;
+}
+
+/*
+ * Master failover, GCS side: a message for a vehicle goes out on the master
+ * that vehicle is heard on now, one with no target on the current master of
+ * every autopilot, so a vehicle on two links does not get each command twice.
+ * Nothing heard within the timeout: every master, as without failover.
+ */
+uint64_t Mainloop::_uplink_masters(const struct buffer *buf) const
+{
+    const usec_t now = now_usec();
+    uint64_t mask = 0;
+
+    if (buf->curr.target_sysid > 0) {
+        int winner = _master_failover.winner(buf->curr.target_sysid, now);
+        if (winner >= 0) {
+            mask = (uint64_t)1 << winner;
+        }
+    } else {
+        for (const auto &m : _masters) {
+            for (auto sys_comp_id : m->get_autopilots()) {
+                int winner = _master_failover.winner(sys_comp_id >> 8, now);
+                if (winner >= 0) {
+                    mask |= (uint64_t)1 << winner;
+                }
+            }
+        }
+    }
+
+    return mask != 0 ? mask : ~(uint64_t)0;
 }
 
 void Mainloop::route_msg(struct buffer *buf, const Endpoint *source)
 {
     bool unknown = true;
+    uint64_t uplink_masters = ~(uint64_t)0;
 
     if (!_comp_priority.check(buf->curr.msg_id,
                               buf->curr.target_sysid,
@@ -194,8 +263,22 @@ void Mainloop::route_msg(struct buffer *buf, const Endpoint *source)
         return;
     }
 
+    if (_master_failover.ranks() > 0 && source != nullptr) {
+        if (!source->is_master()) {
+            uplink_masters = _uplink_masters(buf);
+        } else if (!_failover_passes(buf, *source)) {
+            log_trace("Message %u from %u/%u on standby master %s dropped",
+                      buf->curr.msg_id,
+                      buf->curr.src_sysid,
+                      buf->curr.src_compid,
+                      source->get_name().c_str());
+            return;
+        }
+    }
+
     for (const auto &e : this->g_endpoints) {
-        auto acceptState = _hub_mode ? _hub_accept(*e, buf, source) : e->accept_msg(buf);
+        auto acceptState = _hub_mode ? _hub_accept(*e, buf, source, uplink_masters)
+                                     : e->accept_msg(buf);
 
         switch (acceptState) {
         case Endpoint::AcceptState::Accepted:
@@ -593,13 +676,40 @@ bool Mainloop::add_endpoints(const Configuration &config)
         _comp_priority.configure(config.comp_priority, msg_ids, config.comp_priority_timeout_ms);
     }
 
-    unsigned masters = 0;
     for (const auto &e : g_endpoints) {
-        masters += e->is_master() ? 1 : 0;
+        if (e->is_master()) {
+            _masters.push_back(e);
+        }
     }
-    _hub_mode = masters > 0;
+    std::stable_sort(_masters.begin(),
+                     _masters.end(),
+                     [](const std::shared_ptr<Endpoint> &a, const std::shared_ptr<Endpoint> &b) {
+                         return a->get_master_priority() < b->get_master_priority();
+                     });
+    for (size_t i = 0; i < _masters.size(); i++) {
+        _masters[i]->set_master_rank(i);
+    }
+    _hub_mode = !_masters.empty();
     if (_hub_mode) {
-        log_info("MAVProxy-style routing: %u master endpoint(s)", masters);
+        log_info("MAVProxy-style routing: %zu master endpoint(s)", _masters.size());
+    }
+
+    if (config.master_failover_timeout_ms > 0) {
+        if (_masters.size() < 2) {
+            log_warning("MasterFailoverTimeout needs two or more Master endpoints: failover off");
+        } else if (_masters.size() > 64) {
+            log_error("Master failover handles up to 64 Master endpoints");
+            return false;
+        } else {
+            std::string order;
+            for (const auto &m : _masters) {
+                order += (order.empty() ? "" : " > ") + m->get_name();
+            }
+            log_info("Master failover enabled: %s, %lu ms timeout",
+                     order.c_str(),
+                     config.master_failover_timeout_ms);
+            _master_failover.configure(_masters.size(), config.master_failover_timeout_ms);
+        }
     }
 
     _gcs.sysid = config.gcs_sysid;

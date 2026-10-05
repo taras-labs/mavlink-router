@@ -26,8 +26,7 @@ void CompPriority::configure(std::vector<uint8_t> compids, std::vector<uint32_t>
 {
     _compids = std::move(compids);
     _msg_ids = std::move(msg_ids);
-    _timeout_us = (usec_t)timeout_ms * USEC_PER_MSEC;
-    _targets.clear();
+    _arbiter.configure(_compids.size(), timeout_ms);
 }
 
 bool CompPriority::check(uint32_t msg_id, int target_sysid, uint8_t src_compid, usec_t now)
@@ -46,34 +45,20 @@ bool CompPriority::check(uint32_t msg_id, int target_sysid, uint8_t src_compid, 
     }
     const int rank = it - _compids.begin();
 
-    TargetState &state = _targets[target_sysid];
-    state.last_seen.resize(_compids.size(), 0);
-    state.last_seen[rank] = now;
-
-    // The sender itself was seen just now, so a winner always exists and
-    // never ranks below it.
-    int winner = rank;
-    for (int i = 0; i < rank; i++) {
-        if (state.last_seen[i] != 0 && now - state.last_seen[i] <= _timeout_us) {
-            winner = i;
-            break;
-        }
-    }
-
-    if (winner != state.active) {
-        if (state.active < 0) {
+    auto v = _arbiter.observe(target_sysid, rank, now);
+    if (v.changed) {
+        if (v.previous < 0) {
             log_info("Comp priority: target %d driven by compid %u", target_sysid,
-                     _compids[winner]);
-        } else if (winner < state.active) {
+                     _compids[v.winner]);
+        } else if (v.winner < v.previous) {
             log_info("Comp priority: target %d taken over by compid %u from %u", target_sysid,
-                     _compids[winner], _compids[state.active]);
+                     _compids[v.winner], _compids[v.previous]);
         } else {
             log_info("Comp priority: target %d falls back to compid %u, %u silent for %u ms",
-                     target_sysid, _compids[winner], _compids[state.active],
-                     (unsigned)(_timeout_us / USEC_PER_MSEC));
+                     target_sysid, _compids[v.winner], _compids[v.previous],
+                     _arbiter.timeout_ms());
         }
-        state.active = winner;
     }
 
-    return winner == rank;
+    return v.winner == rank;
 }

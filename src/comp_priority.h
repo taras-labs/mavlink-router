@@ -17,10 +17,11 @@
 #pragma once
 
 #include <cstdint>
-#include <map>
 #include <vector>
 
 #include <common/util.h>
+
+#include "priority_arbiter.h"
 
 /*
  * Source-component arbitration for control messages.
@@ -60,13 +61,7 @@ public:
     bool check(uint32_t msg_id, int target_sysid, uint8_t src_compid, usec_t now);
 
 private:
-    struct TargetState {
-        std::vector<usec_t> last_seen; // per rank; 0 = never
-        int active = -1;               // rank currently let through
-    };
-
     std::vector<uint8_t> _compids;
     std::vector<uint32_t> _msg_ids;
-    usec_t _timeout_us = 0;
-    std::map<int, TargetState> _targets;
+    PriorityArbiter _arbiter;
 };

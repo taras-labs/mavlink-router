@@ -26,6 +26,7 @@
 #include "binlog.h"
 #include "comm.h"
 #include "comp_priority.h"
+#include "priority_arbiter.h"
 #include "dedup.h"
 #include "endpoint.h"
 #include "timeout.h"
@@ -53,6 +54,7 @@ struct Configuration {
     unsigned long stream_rate{0};                 ///< conf "StreamRate", Hz
     unsigned long gcs_sysid{255};                 ///< conf "GcsSysid"
     unsigned long gcs_compid{230};                ///< conf "GcsCompid"
+    unsigned long master_failover_timeout_ms{0};  ///< conf "MasterFailoverTimeout"
 };
 
 struct endpoint_entry {
@@ -135,6 +137,8 @@ private:
     CompPriority _comp_priority{}; // disabled by default
 
     bool _hub_mode = false; // any endpoint is a Master
+    std::vector<std::shared_ptr<Endpoint>> _masters{}; // best MasterPriority first
+    PriorityArbiter _master_failover{};                 // disabled: 0 ranks
     struct {
         uint8_t sysid = 255;
         uint8_t compid = 230;
@@ -152,7 +156,9 @@ private:
     bool _retry_timeout_cb(void *data);
     bool _log_aggregate_timeout(void *data);
     Endpoint::AcceptState _hub_accept(const Endpoint &e, const struct buffer *buf,
-                                      const Endpoint *source) const;
+                                      const Endpoint *source, uint64_t uplink_masters) const;
+    bool _failover_passes(const struct buffer *buf, const Endpoint &source);
+    uint64_t _uplink_masters(const struct buffer *buf) const;
     void _write_to(const std::shared_ptr<Endpoint> &e, const mavlink_message_t *msg);
     void _request_streams(const std::shared_ptr<Endpoint> &e, uint16_t sys_comp_id);
     bool _gcs_heartbeat_timeout_cb(void *data);

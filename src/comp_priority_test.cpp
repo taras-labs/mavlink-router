@@ -106,3 +106,61 @@ TEST(CompPriorityTest, ThreeLevels)
     EXPECT_FALSE(p.check(RC_OVERRIDE, FC, 30, ms(135)));
     EXPECT_TRUE(p.check(RC_OVERRIDE, FC, 20, ms(136)));
 }
+
+/*
+ * PriorityArbiter as master failover uses it: key is the vehicle sysid, rank
+ * the master's position.
+ */
+TEST(PriorityArbiterTest, FailsOverAfterTimeoutAndBack)
+{
+    PriorityArbiter a;
+    a.configure(2, 500);
+    const int VEHICLE = 1;
+    const unsigned PRIMARY = 0, BACKUP = 1;
+
+    auto v = a.observe(VEHICLE, PRIMARY, ms(0));
+    EXPECT_EQ(v.winner, 0);
+    EXPECT_EQ(v.previous, -1);
+    EXPECT_TRUE(v.changed);
+    EXPECT_EQ(a.observe(VEHICLE, BACKUP, ms(10)).winner, 0); // standby dropped
+    EXPECT_EQ(a.observe(VEHICLE, PRIMARY, ms(100)).winner, 0);
+    EXPECT_EQ(a.winner(VEHICLE, ms(110)), 0);
+
+    // primary silent from 100: backup only after 500 ms of it
+    EXPECT_EQ(a.observe(VEHICLE, BACKUP, ms(600)).winner, 0);
+    EXPECT_EQ(a.winner(VEHICLE, ms(600)), 0);
+    v = a.observe(VEHICLE, BACKUP, ms(601));
+    EXPECT_EQ(v.winner, 1);
+    EXPECT_EQ(v.previous, 0);
+    EXPECT_TRUE(v.changed);
+    EXPECT_EQ(a.winner(VEHICLE, ms(650)), 1);
+    EXPECT_FALSE(a.observe(VEHICLE, BACKUP, ms(700)).changed);
+
+    // primary's first message takes it back
+    v = a.observe(VEHICLE, PRIMARY, ms(900));
+    EXPECT_EQ(v.winner, 0);
+    EXPECT_EQ(v.previous, 1);
+    EXPECT_EQ(a.winner(VEHICLE, ms(901)), 0);
+}
+
+TEST(PriorityArbiterTest, WinnerUnknownOrAllSilent)
+{
+    PriorityArbiter a;
+    a.configure(2, 500);
+    EXPECT_EQ(a.winner(1, ms(0)), -1);
+    a.observe(1, 1, ms(0));
+    EXPECT_EQ(a.winner(1, ms(500)), 1);
+    EXPECT_EQ(a.winner(1, ms(501)), -1);
+    EXPECT_EQ(a.winner(2, ms(0)), -1);
+}
+
+TEST(PriorityArbiterTest, VehiclesIndependent)
+{
+    PriorityArbiter a;
+    a.configure(2, 500);
+    // vehicle 1 only on the primary, vehicle 2 only on the backup
+    EXPECT_EQ(a.observe(1, 0, ms(0)).winner, 0);
+    EXPECT_EQ(a.observe(2, 1, ms(10)).winner, 1);
+    EXPECT_EQ(a.winner(1, ms(20)), 0);
+    EXPECT_EQ(a.winner(2, ms(20)), 1);
+}

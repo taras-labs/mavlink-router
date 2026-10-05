@@ -448,6 +448,7 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
         {"StreamRate",          false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, stream_rate)},
         {"GcsSysid",            false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_sysid)},
         {"GcsCompid",           false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_compid)},
+        {"MasterFailoverTimeout", false, ConfFile::parse_ul,    OPTIONS_TABLE_STRUCT_FIELD(Configuration, master_failover_timeout_ms)},
         {}
     };
     // clang-format on

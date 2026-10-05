@@ -55,6 +55,7 @@ struct UartEndpointConfig {
     std::vector<uint8_t> block_src_sys_in;
     std::string group;
     bool master{false}; ///< MAVProxy-style vehicle side, see Mainloop::route_msg
+    unsigned long master_priority{0}; ///< lower is preferred, see MasterFailoverTimeout
 };
 
 struct UdpEndpointConfig {
@@ -78,6 +79,7 @@ struct UdpEndpointConfig {
     std::vector<uint8_t> block_src_sys_in;
     std::string group;
     bool master{false}; ///< MAVProxy-style vehicle side, see Mainloop::route_msg
+    unsigned long master_priority{0}; ///< lower is preferred, see MasterFailoverTimeout
 };
 
 struct TcpEndpointConfig {
@@ -99,6 +101,7 @@ struct TcpEndpointConfig {
     std::vector<uint8_t> block_src_sys_in;
     std::string group;
     bool master{false}; ///< MAVProxy-style vehicle side, see Mainloop::route_msg
+    unsigned long master_priority{0}; ///< lower is preferred, see MasterFailoverTimeout
 };
 
 /*
@@ -241,8 +244,15 @@ public:
     std::string get_type() const { return this->_type; }
     std::string get_group_name() const { return this->_group_name; };
 
+    std::string get_name() const { return this->_name; }
+
     bool is_master() const { return _master; }
     void set_master(bool master) { _master = master; }
+    unsigned long get_master_priority() const { return _master_priority; }
+    void set_master_priority(unsigned long priority) { _master_priority = priority; }
+    // position among the masters, best first (Mainloop::add_endpoints)
+    int get_master_rank() const { return _master_rank; }
+    void set_master_rank(int rank) { _master_rank = rank; }
     // sys/comp ids of the autopilots that sent a HEARTBEAT here (masters only)
     const std::vector<uint16_t> &get_autopilots() const { return _autopilots; }
 
@@ -287,6 +297,8 @@ protected:
     std::vector<uint16_t> _sys_comp_ids;
 
     bool _master = false;
+    unsigned long _master_priority = 0;
+    int _master_rank = -1;
     std::vector<uint16_t> _autopilots;
     void _add_autopilot(const struct buffer *pbuf);
 

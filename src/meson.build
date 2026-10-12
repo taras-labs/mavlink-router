@@ -11,8 +11,11 @@ exe_mavlink_router = executable('mavlink-routerd',
          'logendpoint.cpp',
          'main.cpp',
          'mainloop.cpp',
+         'message_disable.cpp',
          'pollable.cpp',
          'priority_arbiter.cpp',
+         'rc_control.cpp',
+         'rc_gate.cpp',
          'timeout.cpp',
          'ulog.cpp',
          'tlog.cpp',
@@ -38,9 +41,12 @@ if dep_gtest.found()
             'endpoint.cpp',
             'logendpoint.cpp',
             'mainloop.cpp',
+            'message_disable.cpp',
             'mainloop_test.cpp',
             'pollable.cpp',
             'priority_arbiter.cpp',
+            'rc_control.cpp',
+            'rc_gate.cpp',
             'timeout.cpp',
             'ulog.cpp',
             'tlog.cpp',
@@ -66,8 +72,11 @@ if dep_gtest.found()
             'endpoints_test.cpp',
             'logendpoint.cpp',
             'mainloop.cpp',
+            'message_disable.cpp',
             'pollable.cpp',
             'priority_arbiter.cpp',
+            'rc_control.cpp',
+            'rc_gate.cpp',
             'timeout.cpp',
             'ulog.cpp',
             'tlog.cpp',
@@ -98,4 +107,34 @@ if dep_gtest.found()
           install: false,
   )
   test('comp_priority', exe_comp_priority_test)
+
+  exe_message_disable_test = executable('message_disable_test',
+          [
+            'message_disable.cpp',
+            'message_disable_test.cpp',
+          ],
+          include_directories: [src_inc, mavlink_inc],
+          dependencies : [
+            dep_gtest,
+            dep_rt,
+          ],
+          link_with: libcommon_private,
+          install: false,
+  )
+  test('message_disable', exe_message_disable_test)
+
+  exe_rc_gate_test = executable('rc_gate_test',
+          [
+            'rc_gate.cpp',
+            'rc_gate_test.cpp',
+          ],
+          include_directories: [src_inc, mavlink_inc],
+          dependencies : [
+            dep_gtest,
+            dep_rt,
+          ],
+          link_with: libcommon_private,
+          install: false,
+  )
+  test('rc_gate', exe_rc_gate_test)
 endif

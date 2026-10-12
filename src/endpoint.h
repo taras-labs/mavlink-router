@@ -246,6 +246,13 @@ public:
 
     std::string get_name() const { return this->_name; }
 
+    /*
+     * Address of the peer the message being routed came from, where the
+     * transport has one per message (UDP: the sender of the last datagram
+     * read); empty otherwise.
+     */
+    virtual std::string peer_address() const { return ""; }
+
     bool is_master() const { return _master; }
     void set_master(bool master) { _master = master; }
     unsigned long get_master_priority() const { return _master_priority; }
@@ -355,6 +362,7 @@ public:
 
     int write_msg(const struct buffer *pbuf) override;
     int flush_pending_msgs() override { return -ENOSYS; }
+    std::string peer_address() const override;
 
     bool setup(UdpEndpointConfig config); ///< open socket and apply config
 

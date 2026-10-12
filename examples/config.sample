@@ -114,6 +114,103 @@
 # Default: 500
 #CompPriorityTimeout = 500
 
+# RcControlPort
+# UDP port on which a controller sets the RC gate's mode, one datagram of text
+# per mode, re-sent as often as it likes; the last one holds until the next:
+#   open   no remote pilot: RC_CHANNELS_OVERRIDE / MANUAL_CONTROL pass from all
+#   pilot  only from RcPilotEndpoint and RcPassCompids; the router sends
+#          RcFailsafe itself while the pilot is silent for RcFailsafeTimeout
+#   local  the station took over from the pilot: only from RcLocalEndpoint
+#          and RcPassCompids (with no RcLocalEndpoint, from all but the pilot)
+# Leaving pilot mode sends one frame handing back to the RC radio the channels
+# the pilot's (or the failsafe) frame held. The router starts open. Keep the
+# port off any network a stranger can reach: it has no authentication.
+# Default: 0 (no RC gate)
+#RcControlPort = 14570
+
+# RcPilotEndpoint
+# The endpoint (by name) the remote pilot's transmitter sends on. Whatever
+# arrives there is the pilot's, whichever component id it carries: a compid
+# is whatever the sender writes, so it names a source and identifies nothing.
+# In pilot mode only from the address the controller names with the mode.
+# Required with RcControlPort.
+#RcPilotEndpoint = out2
+
+# RcPilotSysid
+# RC_CHANNELS_OVERRIDE / MANUAL_CONTROL arriving on RcPilotEndpoint is passed
+# on as this source sysid, its checksum rewritten to match (a signed frame is
+# passed on as it is). A transitional measure: pilots up to 3.6.12 send their
+# RC as sysid 254, which the FC drops (it takes overrides from SYSID_MYGCS
+# only); from 3.7.0 they send 255 themselves.
+# TODO(pilot-sysid): remove once every pilot runs v3.7.0+.
+# Default: 0 (as sent)
+#RcPilotSysid = 255
+
+# RcLocalEndpoint
+# The endpoint this station's own transmitter sends on, likewise by port
+# alone: the one RC source local mode lets through besides RcPassCompids.
+# Default: none (local mode passes everything but RcPilotEndpoint)
+#RcLocalEndpoint = out3
+
+# RcPriorityEndpoint
+# The endpoint RcPriorityCompid's frames must arrive on to hold the sticks;
+# from anywhere else that compid is an ordinary source. A frame on
+# RcPilotEndpoint or RcLocalEndpoint is that transmitter's whatever its compid.
+# The three must differ.
+# Default: none (any endpoint)
+#RcPriorityEndpoint = out1
+
+# RcPassCompids
+# Components whose RC passes in every mode, e.g. a frame driving only the
+# channels the pilot leaves alone.
+# Default: empty
+#RcPassCompids = 194
+
+# RcFailsafeTimeout
+# Milliseconds of pilot silence in pilot mode before the failsafe frame. 0
+# never sends it. Needs a Master endpoint.
+# Default: 500
+#RcFailsafeTimeout = 500
+
+# RcFailsafe
+# The failsafe frame, sent as GcsSysid/GcsCompid to every autopilot on a Master
+# endpoint: up to 18 comma-separated entries, channel 1 first, each a pulse
+# width, "last" (the pilot's last value, "ignore" before the first) or
+# "ignore" (65535, the channel stays as it is). Channels not listed are
+# "last". Overriding every channel keeps the FC's own receiver out; the
+# throttle must sit below the FC's FS_THR_VALUE / THR_FS_VALUE for the FC to
+# hold its RC failsafe.
+# Default: 1500,1500,900,1500
+#RcFailsafe = 1500,1500,900,1500
+
+# RcFailsafeRate
+# Hz the failsafe frame is sent at.
+# Default: 10
+#RcFailsafeRate = 10
+
+# RcPriorityCompid
+# A component above the gate's modes: while it holds the sticks (it sent a
+# frame with a value in it within RcPriorityTimeout) it passes in every mode
+# and every other RC source but RcPassCompids is dropped, the pilot's included.
+# A frame of it that holds nothing ends the hold at once. In pilot mode it
+# counts as the pilot flying, so no failsafe frame is sent while it drives.
+# Default: none
+#RcPriorityCompid = 0
+
+# RcPriorityTimeout
+# Milliseconds one of its frames holds the sticks for.
+# Default: 1500
+#RcPriorityTimeout = 1500
+
+# RcPassTimeout
+# RcPassCompids pass only while some stick source passed within this many
+# milliseconds (the router's own failsafe frame does not count): any RC frame tells the
+# FC its radio is alive, so a frame re-sent for a couple of channels alone would
+# keep it from ever noticing the transmitter gone. They pass anyway until the
+# first stick source. 0 lets them pass always.
+# Default: 0
+#RcPassTimeout = 1500
+
 # GcsHeartbeatRate
 # Send a GCS HEARTBEAT (as GcsSysid/GcsCompid) to every Master endpoint at this
 # rate, like MAVProxy does. Needs a Master endpoint.
@@ -127,8 +224,17 @@
 # Default: 0 (disabled)
 #StreamRate = 4
 
+# DisableMessages
+# Keep these messages off on every autopilot seen on a Master endpoint, by
+# sending it MAV_CMD_SET_MESSAGE_INTERVAL -1 for one of them a second, round
+# robin, for as long as the router runs: the autopilot forgets it on reboot and
+# on any REQUEST_DATA_STREAM (StreamRate's included). Message ids, comma
+# separated; HEARTBEAT (0) is refused. Needs a Master endpoint.
+# Default: empty (disabled)
+#DisableMessages = 87,62,11039
+
 # GcsSysid / GcsCompid
-# Source of the two messages above.
+# Source of the messages above.
 # Default: 255 / 230 (MAVProxy's)
 #GcsSysid = 255
 #GcsCompid = 230

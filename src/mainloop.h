@@ -29,6 +29,9 @@
 #include "priority_arbiter.h"
 #include "dedup.h"
 #include "endpoint.h"
+#include "message_disable.h"
+#include "rc_control.h"
+#include "rc_gate.h"
 #include "timeout.h"
 #include "ulog.h"
 
@@ -52,9 +55,23 @@ struct Configuration {
     unsigned long comp_priority_timeout_ms{500};  ///< conf "CompPriorityTimeout"
     unsigned long gcs_heartbeat_rate{0};          ///< conf "GcsHeartbeatRate", Hz
     unsigned long stream_rate{0};                 ///< conf "StreamRate", Hz
+    std::vector<uint32_t> disable_msg_ids;        ///< conf "DisableMessages"
     unsigned long gcs_sysid{255};                 ///< conf "GcsSysid"
     unsigned long gcs_compid{230};                ///< conf "GcsCompid"
     unsigned long master_failover_timeout_ms{0};  ///< conf "MasterFailoverTimeout"
+    unsigned long rc_control_port{0};             ///< conf "RcControlPort", 0: no RC gate
+    std::vector<uint8_t> rc_pass_compids;         ///< conf "RcPassCompids"
+    unsigned long rc_failsafe_timeout_ms{500};    ///< conf "RcFailsafeTimeout", 0: never
+    std::string rc_failsafe{"1500,1500,900,1500"}; ///< conf "RcFailsafe"
+    unsigned long rc_failsafe_rate{10};           ///< conf "RcFailsafeRate", Hz
+    unsigned long rc_priority_compid{256};        ///< conf "RcPriorityCompid", 256: none
+    unsigned long rc_priority_timeout_ms{1500};   ///< conf "RcPriorityTimeout"
+    std::string rc_pilot_endpoint;                ///< conf "RcPilotEndpoint", required with the gate
+    std::string rc_local_endpoint;                ///< conf "RcLocalEndpoint", empty: all but the pilot
+    std::string rc_priority_endpoint;             ///< conf "RcPriorityEndpoint", empty: any
+    unsigned long rc_pass_timeout_ms{0};          ///< conf "RcPassTimeout", 0: always pass
+    // TODO(pilot-sysid): remove once every pilot runs v3.7.0+.
+    unsigned long rc_pilot_sysid{0};              ///< conf "RcPilotSysid", 0: as sent
 };
 
 struct endpoint_entry {
@@ -139,6 +156,14 @@ private:
     bool _hub_mode = false; // any endpoint is a Master
     std::vector<std::shared_ptr<Endpoint>> _masters{}; // best MasterPriority first
     PriorityArbiter _master_failover{};                 // disabled: 0 ranks
+    MessageDisable _message_disable{};                  // disabled by default
+    RcGate _rc_gate{};                                  // disabled by default
+    std::unique_ptr<RcControl> _rc_control{};
+    bool _rc_failsafe_sent = false; // the failsafe frame holds the sticks
+    // TODO(pilot-sysid): remove once every pilot runs v3.7.0+.
+    uint8_t _rc_pilot_sysid = 0;     // RcPilotSysid, 0: off
+    int _rc_pilot_sysid_seen = -1;   // the pilot's own sysid last logged
+    bool _rc_pilot_sysid_warned = false;
     struct {
         uint8_t sysid = 255;
         uint8_t compid = 230;
@@ -163,6 +188,12 @@ private:
     void _request_streams(const std::shared_ptr<Endpoint> &e, uint16_t sys_comp_id);
     bool _gcs_heartbeat_timeout_cb(void *data);
     bool _stream_rate_timeout_cb(void *data);
+    bool _disable_messages_timeout_cb(void *data);
+    void _rc_control_cb(const std::string &text);
+    void _log_rc_pass_change();
+    void _patch_pilot_sysid(struct buffer *buf); // TODO(pilot-sysid): remove once every pilot runs v3.7.0+.
+    bool _rc_failsafe_timeout_cb(void *data);
+    void _send_rc_override(const uint16_t channels[RcGate::CHANNELS]);
 
     Mainloop() = default;
     Mainloop(const Mainloop &) = delete;

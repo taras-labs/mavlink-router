@@ -446,9 +446,23 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
         {"CompPriorityTimeout", false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, comp_priority_timeout_ms)},
         {"GcsHeartbeatRate",    false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_heartbeat_rate)},
         {"StreamRate",          false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, stream_rate)},
+        {"DisableMessages",     false, ConfFile::parse_uint32_vector, OPTIONS_TABLE_STRUCT_FIELD(Configuration, disable_msg_ids)},
         {"GcsSysid",            false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_sysid)},
         {"GcsCompid",           false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, gcs_compid)},
         {"MasterFailoverTimeout", false, ConfFile::parse_ul,    OPTIONS_TABLE_STRUCT_FIELD(Configuration, master_failover_timeout_ms)},
+        {"RcControlPort",       false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_control_port)},
+        {"RcPassCompids",       false, ConfFile::parse_uint8_vector, OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_pass_compids)},
+        {"RcFailsafeTimeout",   false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_failsafe_timeout_ms)},
+        {"RcFailsafe",          false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_failsafe)},
+        {"RcFailsafeRate",      false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_failsafe_rate)},
+        {"RcPriorityCompid",    false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_priority_compid)},
+        {"RcPriorityTimeout",   false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_priority_timeout_ms)},
+        {"RcPilotEndpoint",     false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_pilot_endpoint)},
+        {"RcLocalEndpoint",     false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_local_endpoint)},
+        {"RcPriorityEndpoint",  false, ConfFile::parse_stdstring, OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_priority_endpoint)},
+        {"RcPassTimeout",       false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_pass_timeout_ms)},
+        // TODO(pilot-sysid): remove once every pilot runs v3.7.0+.
+        {"RcPilotSysid",        false, ConfFile::parse_ul,      OPTIONS_TABLE_STRUCT_FIELD(Configuration, rc_pilot_sysid)},
         {}
     };
     // clang-format on
@@ -466,9 +480,33 @@ static int parse_confs(ConfFile &conffile, Configuration &config)
         log_error("GcsHeartbeatRate must be 0..100 Hz");
         return -EINVAL;
     }
+    if (config.rc_control_port > UINT16_MAX) {
+        log_error("RcControlPort must be 0..%u", UINT16_MAX);
+        return -EINVAL;
+    }
+    if (config.rc_pilot_sysid > 255) {
+        log_error("RcPilotSysid must be 0..255");
+        return -EINVAL;
+    }
+    if (config.rc_priority_compid > 256) {
+        log_error("RcPriorityCompid must be 0..255");
+        return -EINVAL;
+    }
+    if (config.rc_failsafe_rate == 0 || config.rc_failsafe_rate > 50) {
+        log_error("RcFailsafeRate must be 1..50 Hz");
+        return -EINVAL;
+    }
     if (config.stream_rate > UINT16_MAX) {
         log_error("StreamRate must be 0..%u Hz", UINT16_MAX);
         return -EINVAL;
+    }
+    for (auto msg_id : config.disable_msg_ids) {
+        // 0 is also what a non-number parses to; switching off HEARTBEAT would
+        // take the vehicle off every GCS.
+        if (msg_id == 0 || msg_id > 0xffffff) {
+            log_error("DisableMessages: %u is not a message that can be switched off", msg_id);
+            return -EINVAL;
+        }
     }
 
     ret = conffile.extract_options("General", LogEndpoint::option_table, &config.log_config);

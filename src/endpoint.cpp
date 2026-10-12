@@ -1364,6 +1364,21 @@ ssize_t UdpEndpoint::_read_msg(uint8_t *buf, size_t len)
     return r;
 }
 
+std::string UdpEndpoint::peer_address() const
+{
+    char str[INET6_ADDRSTRLEN] = "";
+
+    if (!this->is_ipv6) {
+        inet_ntop(AF_INET, &sockaddr.sin_addr, str, sizeof(str));
+    } else if (IN6_IS_ADDR_V4MAPPED(&sockaddr6.sin6_addr)) {
+        // ::ffff:a.b.c.d on a dual-stack socket: the IPv4 sender, as such
+        inet_ntop(AF_INET, &sockaddr6.sin6_addr.s6_addr[12], str, sizeof(str));
+    } else {
+        inet_ntop(AF_INET6, &sockaddr6.sin6_addr, str, sizeof(str));
+    }
+    return str;
+}
+
 int UdpEndpoint::write_msg(const struct buffer *pbuf)
 {
     struct sockaddr *sock;

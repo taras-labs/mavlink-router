@@ -188,7 +188,7 @@ private:
     void _request_streams(const std::shared_ptr<Endpoint> &e, uint16_t sys_comp_id);
     bool _gcs_heartbeat_timeout_cb(void *data);
     bool _stream_rate_timeout_cb(void *data);
-    bool _disable_messages_timeout_cb(void *data);
+    void _disable_heard(const struct buffer *buf, const Endpoint &source);
     void _rc_control_cb(const std::string &text);
     void _log_rc_pass_change();
     void _patch_pilot_sysid(struct buffer *buf); // TODO(pilot-sysid): remove once every pilot runs v3.7.0+.

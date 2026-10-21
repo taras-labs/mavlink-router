@@ -225,11 +225,13 @@
 #StreamRate = 4
 
 # DisableMessages
-# Keep these messages off on every autopilot seen on a Master endpoint, by
-# sending it MAV_CMD_SET_MESSAGE_INTERVAL -1 for one of them a second, round
-# robin, for as long as the router runs: the autopilot forgets it on reboot and
-# on any REQUEST_DATA_STREAM (StreamRate's included). Message ids, comma
-# separated; HEARTBEAT (0) is refused. Needs a Master endpoint.
+# Keep these messages off on every autopilot seen on a Master endpoint: when
+# one of them is heard from it, the router sends MAV_CMD_SET_MESSAGE_INTERVAL -1
+# for it back on that link, because the autopilot forgets it on reboot and on
+# any REQUEST_DATA_STREAM (StreamRate's included). Nothing is sent while they
+# stay off; at most one command a second per link, and one per message per 3 s
+# while copies sent before the autopilot obeyed are still arriving. Message ids,
+# comma separated; HEARTBEAT (0) is refused. Needs a Master endpoint.
 # Default: empty (disabled)
 #DisableMessages = 87,62,11039
 

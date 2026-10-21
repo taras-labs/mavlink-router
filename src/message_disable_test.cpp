@@ -26,24 +26,79 @@ TEST(MessageDisableTest, EmptyIsDisabled)
     EXPECT_FALSE(d.enabled());
 }
 
-TEST(MessageDisableTest, OneMessagePerTickRoundRobin)
+static const uintptr_t LINK_A = 1, LINK_B = 2;
+static const uint16_t FC = (1 << 8) | 1;
+static const usec_t T0 = 1000 * USEC_PER_SEC;
+
+TEST(MessageDisableTest, UnlistedIsNeverSent)
+{
+    MessageDisable d;
+    d.configure({87, 62});
+    EXPECT_TRUE(d.listed(62));
+    EXPECT_FALSE(d.listed(33));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 33, T0));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 0, T0));
+}
+
+TEST(MessageDisableTest, SentOnFirstSight)
+{
+    MessageDisable d;
+    d.configure({87, 62});
+    EXPECT_TRUE(d.heard(LINK_A, FC, 87, T0));
+}
+
+// Copies sent before the autopilot obeyed keep arriving: one command for them.
+TEST(MessageDisableTest, OneCommandPerMessagePerHoldoff)
+{
+    MessageDisable d;
+    d.configure({87});
+    ASSERT_TRUE(d.heard(LINK_A, FC, 87, T0));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 87, T0 + USEC_PER_SEC));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 87, T0 + MessageDisable::HOLDOFF - 1));
+    // still coming: the command was lost, send it again
+    EXPECT_TRUE(d.heard(LINK_A, FC, 87, T0 + MessageDisable::HOLDOFF));
+}
+
+// After a reboot every listed message is back at once: no burst in the uplink.
+TEST(MessageDisableTest, OneCommandPerLinkPerSpacing)
 {
     MessageDisable d;
     d.configure({87, 62, 11039});
-    ASSERT_TRUE(d.enabled());
-    EXPECT_EQ(d.next(), 87u);
-    EXPECT_EQ(d.next(), 62u);
-    EXPECT_EQ(d.next(), 11039u);
-    EXPECT_EQ(d.next(), 87u); // and again, for ever
+    ASSERT_TRUE(d.heard(LINK_A, FC, 87, T0));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 62, T0 + 1));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 11039, T0 + MessageDisable::SPACING - 1));
+    // a refused message gets its turn with a later copy
+    EXPECT_TRUE(d.heard(LINK_A, FC, 62, T0 + MessageDisable::SPACING));
+    EXPECT_FALSE(d.heard(LINK_A, FC, 11039, T0 + MessageDisable::SPACING + 1));
+    EXPECT_TRUE(d.heard(LINK_A, FC, 11039, T0 + 2 * MessageDisable::SPACING));
 }
 
-TEST(MessageDisableTest, ReconfigureStartsOver)
+// The autopilot keeps the setting per link: each link is commanded on its own.
+TEST(MessageDisableTest, LinksAreIndependent)
 {
     MessageDisable d;
-    d.configure({1, 2, 3});
-    d.next();
-    d.configure({7, 8});
-    EXPECT_EQ(d.next(), 7u);
+    d.configure({87});
+    ASSERT_TRUE(d.heard(LINK_A, FC, 87, T0));
+    EXPECT_TRUE(d.heard(LINK_B, FC, 87, T0));
+}
+
+TEST(MessageDisableTest, AutopilotsShareTheLinksSpacing)
+{
+    MessageDisable d;
+    d.configure({87});
+    const uint16_t other = (2 << 8) | 1;
+    ASSERT_TRUE(d.heard(LINK_A, FC, 87, T0));
+    EXPECT_FALSE(d.heard(LINK_A, other, 87, T0 + 1));
+    EXPECT_TRUE(d.heard(LINK_A, other, 87, T0 + MessageDisable::SPACING));
+}
+
+TEST(MessageDisableTest, ReconfigureForgets)
+{
+    MessageDisable d;
+    d.configure({87});
+    ASSERT_TRUE(d.heard(LINK_A, FC, 87, T0));
+    d.configure({87, 62});
+    EXPECT_TRUE(d.heard(LINK_A, FC, 87, T0 + 1));
 }
 
 TEST(MessageDisableTest, PacksSetMessageIntervalMinusOne)

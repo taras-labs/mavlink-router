@@ -18,24 +18,35 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <tuple>
 #include <vector>
 
 #include <common/mavlink.h>
+#include <common/util.h>
 
 /*
  * Keeps chosen messages switched off on autopilots.
  *
  * Each one is sent MAV_CMD_SET_MESSAGE_INTERVAL with an interval of -1 ("stop
  * sending"). The autopilot keeps that in RAM only, and per link: a reboot, or
- * any GCS's REQUEST_DATA_STREAM, turns the message back on. So the commands
- * are re-sent for as long as the router runs.
+ * any GCS's REQUEST_DATA_STREAM, turns the message back on. So the command is
+ * sent when a listed message is heard, on the link it was heard on, and never
+ * while the autopilot keeps them off: a vehicle that obeys costs nothing.
  *
- * One message per tick, round robin, rather than the whole list at once: on a
- * slow radio a burst of commands queues in the uplink in front of the RC
- * overrides, and one small command a tick never does.
+ * At most one command per link per SPACING: after a reboot every listed
+ * message shows up at once, and on a slow radio a burst of commands queues in
+ * the uplink in front of the RC overrides. A message refused for spacing is
+ * commanded on one of its next copies. And one command per message per
+ * HOLDOFF: copies the autopilot sent before it obeyed are still coming down a
+ * queued radio (a second and more on a SineLink), and each would be answered
+ * with another command; a command lost on the way is re-sent after it.
  */
 class MessageDisable {
 public:
+    static constexpr usec_t SPACING = USEC_PER_SEC;
+    static constexpr usec_t HOLDOFF = 3 * USEC_PER_SEC;
+
     MessageDisable() = default;
 
     /*
@@ -45,12 +56,14 @@ public:
 
     bool enabled() const { return !_msg_ids.empty(); }
     size_t size() const { return _msg_ids.size(); }
+    bool listed(uint32_t msg_id) const;
 
     /*
-     * The message to send the command for on this tick; moves on to the next.
-     * Only valid while enabled().
+     * @msg_id was heard from the autopilot @sys_comp_id (sysid << 8 | compid)
+     * on @link at @now. True when the command for it is to be sent on that
+     * link now; it is then counted as sent.
      */
-    uint32_t next();
+    bool heard(uintptr_t link, uint16_t sys_comp_id, uint32_t msg_id, usec_t now);
 
     /*
      * Packs the command from sysid/compid for the autopilot at
@@ -61,5 +74,6 @@ public:
 
 private:
     std::vector<uint32_t> _msg_ids;
-    size_t _next = 0;
+    std::map<std::tuple<uintptr_t, uint16_t, uint32_t>, usec_t> _sent; // per message
+    std::map<uintptr_t, usec_t> _link_sent;                           // per link
 };

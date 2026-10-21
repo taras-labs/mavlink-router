@@ -250,6 +250,10 @@ void Mainloop::route_msg(struct buffer *buf, const Endpoint *source)
     bool unknown = true;
     uint64_t uplink_masters = ~(uint64_t)0;
 
+    if (_message_disable.enabled() && source != nullptr && source->is_master()) {
+        _disable_heard(buf, *source);
+    }
+
     if (_rc_gate.enabled() && RcGate::is_rc(buf->curr.msg_id)) {
         // Where it came in, and from whom: what binds a compid to a sender.
         const std::string endpoint = source != nullptr ? source->get_name() : "";
@@ -591,25 +595,36 @@ bool Mainloop::_stream_rate_timeout_cb(void *data)
     return true;
 }
 
-// One message a tick, to every autopilot on every master -- the standby of a
-// failover pair included, like the heartbeat and the stream request, so a
-// switch to it does not bring the messages back.
-bool Mainloop::_disable_messages_timeout_cb(void *data)
+// A listed message heard from an autopilot on a master is switched off on that
+// link, the one the autopilot keeps the setting for -- the standby of a
+// failover pair included, whose data is dropped only after this, so a switch
+// to it does not bring the messages back.
+void Mainloop::_disable_heard(const struct buffer *buf, const Endpoint &source)
 {
-    const uint32_t msg_id = _message_disable.next();
-    mavlink_message_t msg;
-
-    for (const auto &e : g_endpoints) {
-        if (!e->is_master()) {
-            continue;
-        }
-        for (auto sys_comp_id : e->get_autopilots()) {
-            MessageDisable::pack(_gcs.sysid, _gcs.compid, sys_comp_id, msg_id, &msg);
-            _write_to(e, &msg);
-        }
+    const uint32_t msg_id = buf->curr.msg_id;
+    if (!_message_disable.listed(msg_id)) {
+        return;
     }
 
-    return true;
+    const uint16_t sys_comp_id = ((uint16_t)buf->curr.src_sysid << 8) | buf->curr.src_compid;
+    if (!vector_contains(source.get_autopilots(), sys_comp_id)
+        || !_message_disable.heard((uintptr_t)&source, sys_comp_id, msg_id, now_usec())) {
+        return;
+    }
+
+    for (const auto &e : g_endpoints) {
+        if (e.get() == &source) {
+            mavlink_message_t msg;
+            MessageDisable::pack(_gcs.sysid, _gcs.compid, sys_comp_id, msg_id, &msg);
+            log_debug("DisableMessages: message %u heard from %u/%u on %s, switching it off",
+                      msg_id,
+                      buf->curr.src_sysid,
+                      buf->curr.src_compid,
+                      source.get_name().c_str());
+            _write_to(e, &msg);
+            return;
+        }
+    }
 }
 
 // RcPilotSysid, a transitional measure: a pilot up to 3.6.12 sends its RC as
@@ -1024,15 +1039,13 @@ bool Mainloop::add_endpoints(const Configuration &config)
     }
 
     if (_message_disable.enabled()) {
-        log_info("Keeping %zu message(s) off on autopilots on masters, one "
-                 "SET_MESSAGE_INTERVAL a second",
+        log_info("Keeping %zu message(s) off on autopilots on masters: SET_MESSAGE_INTERVAL "
+                 "-1 when one is heard, at most one a second per link",
                  _message_disable.size());
         if (config.stream_rate > 0) {
-            log_warning("StreamRate turns DisableMessages' messages back on every 15 s");
+            log_warning("StreamRate turns DisableMessages' messages back on every 15 s, "
+                        "and each costs a command again");
         }
-        add_timeout(MSEC_PER_SEC,
-                    std::bind(&Mainloop::_disable_messages_timeout_cb, this, std::placeholders::_1),
-                    this);
     }
 
     return true;

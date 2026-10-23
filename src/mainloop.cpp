@@ -322,7 +322,8 @@ void Mainloop::route_msg(struct buffer *buf, const Endpoint *source)
                       buf->curr.target_compid,
                       buf->curr.src_sysid,
                       buf->curr.src_compid);
-            if (write_msg(e, buf) == -EPIPE) { // only TCP endpoints should return -EPIPE
+            if (!_msg_rate_limited(e, buf)
+                && write_msg(e, buf) == -EPIPE) { // only TCP endpoints should return -EPIPE
                 should_process_tcp_hangups = true;
             }
             unknown = false;
@@ -1054,6 +1055,101 @@ bool Mainloop::add_endpoints(const Configuration &config)
 void Mainloop::clear_endpoints()
 {
     g_endpoints.clear();
+    _msg_rate.clear();
+}
+
+/*
+ * MsgRateOut: true when @buf is held back for @e (it is written later by the
+ * timer, if no fresher copy replaces it first), false when it goes out now.
+ */
+bool Mainloop::_msg_rate_limited(const std::shared_ptr<Endpoint> &e, const struct buffer *buf)
+{
+    const usec_t interval = e->msg_interval_out(buf->curr.msg_id);
+
+    if (interval == 0 || buf->curr.msg_id == UINT32_MAX) {
+        return false;
+    }
+
+    const auto verdict = _msg_rate.offer((uintptr_t)e.get(),
+                                         buf->curr.msg_id,
+                                         buf->curr.src_sysid,
+                                         buf->curr.src_compid,
+                                         interval,
+                                         now_usec(),
+                                         buf->data,
+                                         buf->len);
+    if (verdict == MsgRate::Verdict::Send) {
+        return false;
+    }
+
+    _msg_rate_arm();
+    return true;
+}
+
+// Makes the timer fire when the first held message is due.
+void Mainloop::_msg_rate_arm()
+{
+    const usec_t due = _msg_rate.next_due();
+    if (due == USEC_INFINITY) {
+        return;
+    }
+    if (_msg_rate_deadline != USEC_INFINITY && _msg_rate_deadline <= due) {
+        return; // already set for this one or an earlier one
+    }
+
+    const usec_t now = now_usec();
+    uint32_t msec = 1;
+    if (due > now) {
+        msec = (uint32_t)((due - now + USEC_PER_MSEC - 1) / USEC_PER_MSEC);
+    }
+
+    if (_msg_rate_timer == nullptr) {
+        _msg_rate_timer = add_timeout(msec,
+                                      std::bind(&Mainloop::_msg_rate_timeout_cb,
+                                                this,
+                                                std::placeholders::_1),
+                                      this);
+        if (_msg_rate_timer == nullptr) {
+            return;
+        }
+    } else {
+        mod_timeout(_msg_rate_timer, msec);
+    }
+    _msg_rate_deadline = now + (usec_t)msec * USEC_PER_MSEC;
+}
+
+bool Mainloop::_msg_rate_timeout_cb(void *data)
+{
+    for (auto &due : _msg_rate.take_due(now_usec())) {
+        std::shared_ptr<Endpoint> target;
+        for (const auto &e : g_endpoints) {
+            if ((uintptr_t)e.get() == due.link) {
+                target = e;
+                break;
+            }
+        }
+        if (target == nullptr) {
+            _msg_rate.forget(due.link); // closed meanwhile
+            continue;
+        }
+
+        struct buffer buf = {};
+        buf.len = due.packet.size();
+        buf.data = due.packet.data();
+        if (write_msg(target, &buf) == -EPIPE) {
+            should_process_tcp_hangups = true;
+        }
+    }
+
+    // Periodic timerfd: set it for the next held message or stop it.
+    _msg_rate_deadline = USEC_INFINITY;
+    if (_msg_rate.next_due() == USEC_INFINITY) {
+        mod_timeout(_msg_rate_timer, 0);
+    } else {
+        _msg_rate_arm();
+    }
+
+    return true;
 }
 
 int Mainloop::tcp_open(unsigned long tcp_port)

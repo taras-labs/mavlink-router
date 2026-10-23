@@ -246,6 +246,21 @@ Message filters:
     blocking this system from sending some unwanted message IDs).
   - So a filter might be named `AllowMsgIdOut` to only allow messages with the listed message ID to be transmitted on that endpoint. See the example config [examples/config.sample](examples/config.sample) for the exact name of each filter parameter.
 
+Message rate limits:
+
+  - `MsgRateOut = <msg id>:<Hz>[,...]` on an endpoint limits how often a message
+    leaves it, for example `MsgRateOut = 30:10` sends ATTITUDE at 10 Hz at most.
+    The other endpoints are not affected: they still get every message.
+  - A message that arrives when its interval since the last one sent is over is
+    sent at once. One that arrives sooner is held until the interval is over,
+    and a fresher one arriving meanwhile replaces it: what is sent is always the
+    latest value, and nothing is sent twice. The interval runs from the message
+    sent, per message id and per sender (sysid/compid).
+  - It cannot make a message faster than the autopilot sends it, and the
+    autopilot is not asked to send less: the router still receives every one.
+    To save the bandwidth on the autopilot's own link use `DisableMessages` or
+    the autopilot's stream rates.
+
 Message de-duplication:
 
   - If enabled, each incoming message is checked, whether another copy was

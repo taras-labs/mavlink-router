@@ -30,6 +30,7 @@
 #include "dedup.h"
 #include "endpoint.h"
 #include "message_disable.h"
+#include "msg_rate.h"
 #include "rc_control.h"
 #include "rc_gate.h"
 #include "timeout.h"
@@ -157,6 +158,9 @@ private:
     std::vector<std::shared_ptr<Endpoint>> _masters{}; // best MasterPriority first
     PriorityArbiter _master_failover{};                 // disabled: 0 ranks
     MessageDisable _message_disable{};                  // disabled by default
+    MsgRate _msg_rate{};                                // MsgRateOut: held messages
+    Timeout *_msg_rate_timer = nullptr;
+    usec_t _msg_rate_deadline = USEC_INFINITY;          // when the timer fires next
     RcGate _rc_gate{};                                  // disabled by default
     std::unique_ptr<RcControl> _rc_control{};
     bool _rc_failsafe_sent = false; // the failsafe frame holds the sticks
@@ -188,6 +192,9 @@ private:
     void _request_streams(const std::shared_ptr<Endpoint> &e, uint16_t sys_comp_id);
     bool _gcs_heartbeat_timeout_cb(void *data);
     bool _stream_rate_timeout_cb(void *data);
+    bool _msg_rate_limited(const std::shared_ptr<Endpoint> &e, const struct buffer *buf);
+    void _msg_rate_arm();
+    bool _msg_rate_timeout_cb(void *data);
     void _disable_heard(const struct buffer *buf, const Endpoint &source);
     void _rc_control_cb(const std::string &text);
     void _log_rc_pass_change();

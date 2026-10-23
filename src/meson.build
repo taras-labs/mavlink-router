@@ -12,6 +12,7 @@ exe_mavlink_router = executable('mavlink-routerd',
          'main.cpp',
          'mainloop.cpp',
          'message_disable.cpp',
+         'msg_rate.cpp',
          'pollable.cpp',
          'priority_arbiter.cpp',
          'rc_control.cpp',
@@ -42,6 +43,7 @@ if dep_gtest.found()
             'logendpoint.cpp',
             'mainloop.cpp',
             'message_disable.cpp',
+            'msg_rate.cpp',
             'mainloop_test.cpp',
             'pollable.cpp',
             'priority_arbiter.cpp',
@@ -73,6 +75,7 @@ if dep_gtest.found()
             'logendpoint.cpp',
             'mainloop.cpp',
             'message_disable.cpp',
+            'msg_rate.cpp',
             'pollable.cpp',
             'priority_arbiter.cpp',
             'rc_control.cpp',
@@ -122,6 +125,21 @@ if dep_gtest.found()
           install: false,
   )
   test('message_disable', exe_message_disable_test)
+
+  exe_msg_rate_test = executable('msg_rate_test',
+          [
+            'msg_rate.cpp',
+            'msg_rate_test.cpp',
+          ],
+          include_directories: [src_inc, mavlink_inc],
+          dependencies : [
+            dep_gtest,
+            dep_rt,
+          ],
+          link_with: libcommon_private,
+          install: false,
+  )
+  test('msg_rate', exe_msg_rate_test)
 
   exe_rc_gate_test = executable('rc_gate_test',
           [

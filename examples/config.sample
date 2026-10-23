@@ -311,6 +311,18 @@
 # Default: Empty list (disabled)
 #BlockSrcSysOut = 
 
+# Rate limit for messages sent via this endpoint (UART, UDP and TCP endpoints
+# alike), message id and the most Hz it may leave at. A message that arrives
+# when its interval since the last one sent is over is sent at once; one that
+# arrives sooner is held until the interval is over, and a fresher one arriving
+# meanwhile replaces it, so what is sent is always the latest value. Counted per
+# message id and per sender (sysid/compid). Nothing else is slowed down: the
+# other endpoints still get every message. Hz may be fractional, 0 is refused
+# (BlockMsgIdOut stops a message).
+# Format: Comma separated list of <message id>:<Hz>
+# Default: Empty list (disabled)
+#MsgRateOut = 30:10,33:2
+
 # Only allow specified MAVLink message IDs to be received on this endpoint.
 # An empty list allows all message IDs.
 # Format: Comma separated list of integers

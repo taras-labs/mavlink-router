@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "comm.h"
+#include "msg_rate.h"
 #include "pollable.h"
 #include "timeout.h"
 
@@ -47,6 +48,7 @@ struct UartEndpointConfig {
     std::vector<uint8_t> block_src_comp_out;
     std::vector<uint8_t> allow_src_sys_out;
     std::vector<uint8_t> block_src_sys_out;
+    std::vector<MsgRateRule> msg_rate_out;
     std::vector<uint32_t> allow_msg_id_in;
     std::vector<uint32_t> block_msg_id_in;
     std::vector<uint8_t> allow_src_comp_in;
@@ -71,6 +73,7 @@ struct UdpEndpointConfig {
     std::vector<uint8_t> block_src_comp_out;
     std::vector<uint8_t> allow_src_sys_out;
     std::vector<uint8_t> block_src_sys_out;
+    std::vector<MsgRateRule> msg_rate_out;
     std::vector<uint32_t> allow_msg_id_in;
     std::vector<uint32_t> block_msg_id_in;
     std::vector<uint8_t> allow_src_comp_in;
@@ -93,6 +96,7 @@ struct TcpEndpointConfig {
     std::vector<uint8_t> block_src_comp_out;
     std::vector<uint8_t> allow_src_sys_out;
     std::vector<uint8_t> block_src_sys_out;
+    std::vector<MsgRateRule> msg_rate_out;
     std::vector<uint32_t> allow_msg_id_in;
     std::vector<uint32_t> block_msg_id_in;
     std::vector<uint8_t> allow_src_comp_in;
@@ -236,6 +240,10 @@ public:
         _blocked_incoming_src_systems.push_back(src_sys);
     }
 
+    void msg_rate_add_out(const MsgRateRule &rule);
+    // Shortest time between two of this message sent from here (MsgRateOut), 0: no limit
+    usec_t msg_interval_out(uint32_t msg_id) const;
+
     bool allowed_by_dedup(const buffer *pbuf) const;
     bool allowed_by_incoming_filters(const struct buffer *pbuf) const;
 
@@ -322,6 +330,7 @@ private:
     std::vector<uint8_t> _blocked_incoming_src_comps;
     std::vector<uint8_t> _allowed_incoming_src_systems;
     std::vector<uint8_t> _blocked_incoming_src_systems;
+    std::vector<MsgRateRule> _outgoing_msg_rates;
 };
 
 class UartEndpoint : public Endpoint {

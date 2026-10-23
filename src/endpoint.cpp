@@ -66,6 +66,7 @@ const ConfFile::OptionsTable UartEndpoint::option_table[] = {
     {"BlockSrcCompOut", false, ConfFile::parse_uint8_vector,    OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, block_src_comp_out)},
     {"AllowSrcSysOut",  false, ConfFile::parse_uint8_vector,    OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, allow_src_sys_out)},
     {"BlockSrcSysOut",  false, ConfFile::parse_uint8_vector,    OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, block_src_sys_out)},
+    {"MsgRateOut",      false, MsgRate::parse,                  OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, msg_rate_out)},
     {"AllowMsgIdIn",    false, ConfFile::parse_uint32_vector,   OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, allow_msg_id_in)},
     {"BlockMsgIdIn",    false, ConfFile::parse_uint32_vector,   OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, block_msg_id_in)},
     {"AllowSrcCompIn",  false, ConfFile::parse_uint8_vector,    OPTIONS_TABLE_STRUCT_FIELD(UartEndpointConfig, allow_src_comp_in)},
@@ -90,6 +91,7 @@ const ConfFile::OptionsTable UdpEndpoint::option_table[] = {
     {"BlockSrcCompOut", false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, block_src_comp_out)},
     {"AllowSrcSysOut",  false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, allow_src_sys_out)},
     {"BlockSrcSysOut",  false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, block_src_sys_out)},
+    {"MsgRateOut",      false, MsgRate::parse,                  OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, msg_rate_out)},
     {"AllowMsgIdIn",    false,  ConfFile::parse_uint32_vector,  OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, allow_msg_id_in)},
     {"BlockMsgIdIn",    false,  ConfFile::parse_uint32_vector,  OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, block_msg_id_in)},
     {"AllowSrcCompIn",  false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(UdpEndpointConfig, allow_src_comp_in)},
@@ -113,6 +115,7 @@ const ConfFile::OptionsTable TcpEndpoint::option_table[] = {
     {"BlockSrcCompOut", false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, block_src_comp_out)},
     {"AllowSrcSysOut",  false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, allow_src_sys_out)},
     {"BlockSrcSysOut",  false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, block_src_sys_out)},
+    {"MsgRateOut",      false, MsgRate::parse,                  OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, msg_rate_out)},
     {"AllowMsgIdIn",    false,  ConfFile::parse_uint32_vector,  OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, allow_msg_id_in)},
     {"BlockMsgIdIn",    false,  ConfFile::parse_uint32_vector,  OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, block_msg_id_in)},
     {"AllowSrcCompIn",  false,  ConfFile::parse_uint8_vector,   OPTIONS_TABLE_STRUCT_FIELD(TcpEndpointConfig, allow_src_comp_in)},
@@ -622,6 +625,25 @@ Endpoint::AcceptState Endpoint::accept_msg(const struct buffer *pbuf, bool route
     return Endpoint::AcceptState::Rejected;
 }
 
+void Endpoint::msg_rate_add_out(const MsgRateRule &rule)
+{
+    log_info("Endpoint %s: message %u leaves at most every %lu ms",
+             _name.c_str(),
+             rule.msg_id,
+             (unsigned long)(rule.interval / USEC_PER_MSEC));
+    _outgoing_msg_rates.push_back(rule);
+}
+
+usec_t Endpoint::msg_interval_out(uint32_t msg_id) const
+{
+    for (const auto &rule : _outgoing_msg_rates) {
+        if (rule.msg_id == msg_id) {
+            return rule.interval;
+        }
+    }
+    return 0;
+}
+
 bool Endpoint::allowed_by_dedup(const buffer *buf) const
 {
     return Mainloop::get_instance().dedup_check_msg(buf);
@@ -807,6 +829,9 @@ bool UartEndpoint::setup(UartEndpointConfig conf)
     }
     for (auto src_sys : conf.block_src_sys_out) {
         this->filter_add_blocked_out_src_sys(src_sys);
+    }
+    for (const auto &rule : conf.msg_rate_out) {
+        this->msg_rate_add_out(rule);
     }
 
     for (auto msg_id : conf.allow_msg_id_in) {
@@ -1143,6 +1168,9 @@ bool UdpEndpoint::setup(UdpEndpointConfig conf)
     }
     for (auto src_sys : conf.block_src_sys_out) {
         this->filter_add_blocked_out_src_sys(src_sys);
+    }
+    for (const auto &rule : conf.msg_rate_out) {
+        this->msg_rate_add_out(rule);
     }
 
     for (auto msg_id : conf.allow_msg_id_in) {
@@ -1532,6 +1560,9 @@ bool TcpEndpoint::setup(TcpEndpointConfig conf)
     }
     for (auto src_sys : conf.block_src_sys_out) {
         this->filter_add_blocked_out_src_sys(src_sys);
+    }
+    for (const auto &rule : conf.msg_rate_out) {
+        this->msg_rate_add_out(rule);
     }
 
     for (auto msg_id : conf.allow_msg_id_in) {
